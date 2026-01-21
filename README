@@ -1,0 +1,5 @@
+start pcm record with:
+pcmrecord -v -s -m 0.25 -t 20 -x 1200 -d ~/recordings/2m fmrpt_out-pcm.local
+
+start radiod with:
+radiod ka9q-radio/config/gab/gab-2m.conf
