@@ -1,5 +1,52 @@
-start pcm record with:
-pcmrecord -v -s -m 0.25 -t 20 -x 1200 -d ~/recordings/2m fmrpt_out-pcm.local
+Run radiod and pcmrecord under systemd (user units, survive logout via
+`loginctl enable-linger gab`):
 
-start radiod with:
-radiod ka9q-radio/config/gab/gab-2m.conf
+    systemctl --user daemon-reload
+    systemctl --user enable --now radiod-2m pcmrecord-2m
+    journalctl --user -u radiod-2m -f
+
+Units live in ~/.config/systemd/user/{radiod-2m,pcmrecord-2m}.service.
+pcmrecord-2m BindsTo radiod-2m, so restarting radiod takes the recorder with it.
+
+Equivalent by hand (what this used to run inside detached screen sessions):
+
+    radiod ka9q-radio/config/gab/gab-2m.conf
+    pcmrecord -v -s -m 0.25 -t 20 -x 1200 -d ~/recordings/2m fmrpt_out-pcm.local
+
+
+PASSBAND -- read before adding a frequency
+------------------------------------------
+samprate and frequency belong in [rtlsdr], NOT [global]. radiod hands the
+front end driver the section named by 'hardware =', so [global] copies are
+silently ignored; it logs `[global] key "frequency" not found` and falls back
+to rtlsdr.c's DEFAULT_SAMPRATE of 1,800,000.
+
+That is what happened here from the start until 2026-08-06: the receiver ran
+at 1.8 MHz (usable +/-846 kHz) with an unlocked LO that auto-tuned to center
+whatever channels were requested. Every edit to the freq list silently moved
+the passband. Adding 147m945 pushed 146.055/146.085/146.115 out of band on
+2026-04-25, ending 21,249 recordings' worth of 146.115 traffic; 146.250 and
+146.295 followed. Nothing was wrong with the antenna or the repeaters.
+
+Usable span is +/-0.47 * samprate. Every entry in `freq` must fall inside
+`frequency` +/- that. Confirm after any change:
+
+    journalctl --user -u radiod-2m -n 40 | grep -E 'samprate|init freq'
+
+Expect `samprate 2,400,000 Hz` and a non-zero `init freq` -- a zero init freq
+means the LO is unlocked and will drift again.
+
+Currently: frequency 147.015 MHz, samprate 2,400,000 -> 145.887 - 148.143 MHz.
+
+Trade-off: 145.17 through 147.945 spans 2.775 MHz, which 2.4 MHz cannot cover.
+147m945 (W6RHC) is kept and 145m17 / 145m29 / 145m37 are dropped -- across all
+of D1 those three produced 0, 1 and 0 recordings respectively, against 326 for
+147m945. Two ways to get them back if they ever matter:
+  - samprate = 3200000 (usable +/-1.504 = 3.008 MHz, center ~146m5575) covers
+    everything, but 3.2 MHz drops USB samples on many controllers. Try it and
+    watch the journal for overruns before trusting it.
+  - a second RTL-SDR with its own radiod on the low half-band.
+
+pushover_alert.py in ~/projects/radiolog alerts when a channel with history
+goes silent for 3 days, so a passband slip like this cannot go unnoticed again.
+Its DEFAULT_IGNORED_FREQUENCIES must be kept in step with the freq list above.
